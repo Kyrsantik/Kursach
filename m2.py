@@ -187,7 +187,6 @@ class EquipmentItemWidget(QWidget):
 
         info_text = f"{equipment_data[1]} - ID: {equipment_data[2]}"
         self.info_label = QLabel(info_text)
-        # ИСПРАВЛЕНО: Добавлен прозрачный фон, чтобы избежать появления темных прямоугольников
         self.info_label.setStyleSheet("color: #000000; background-color: transparent; font-size: 11pt;")
 
         self.status_label = QLabel(self.status if self.status else "")
@@ -204,7 +203,6 @@ class EquipmentItemWidget(QWidget):
 
         self.request_btn = QPushButton("Запросить замену")
         self.request_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        # ИСПРАВЛЕНО: Добавлен стиль для неактивной кнопки, чтобы она не выглядела как фон для текста
         self.request_btn.setStyleSheet("""
             QPushButton { 
                 background-color: #34495e; color: white; 
