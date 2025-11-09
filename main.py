@@ -19,7 +19,6 @@ class DatabaseManager:
     def init_database(self):
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
-        # Включаем поддержку внешних ключей для каскадного удаления
         cursor.execute("PRAGMA foreign_keys = ON;")
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -112,9 +111,11 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT eq.id, eq.equipment_type, eq.inventory_id, r.status
+            SELECT eq.id, eq.equipment_type, eq.inventory_id, 
+                   (SELECT r.status FROM requests r 
+                    WHERE r.equipment_id = eq.id 
+                    ORDER BY r.id DESC LIMIT 1) as status
             FROM equipment eq
-            LEFT JOIN requests r ON eq.id = r.equipment_id AND r.id = (SELECT MAX(id) FROM requests WHERE equipment_id = eq.id)
             WHERE eq.user_id = ?
             ORDER BY eq.equipment_type
         """, (user_id,))
@@ -199,38 +200,71 @@ class DatabaseManager:
             print(f"Ошибка при удалении пользователя: {e}")
             return False
 
+    def delete_equipment(self, equipment_id):
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA foreign_keys = ON;")
+            cursor.execute("DELETE FROM requests WHERE equipment_id = ?", (equipment_id,))
+            cursor.execute("DELETE FROM equipment WHERE id = ?", (equipment_id,))
+            conn.commit()
+            conn.close()
+            return True
+        except sqlite3.Error as e:
+            print(f"Ошибка при удалении оборудования: {e}")
+            return False
+
 
 class EquipmentItemWidget(QWidget):
     def __init__(self, equipment_data, employee_window):
         super().__init__()
         self.equipment_id, self.status, self.employee_window = equipment_data[0], equipment_data[3], employee_window
-        layout = QHBoxLayout(self);
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
+
         self.info_label = QLabel(f"{equipment_data[1]} - ID: {equipment_data[2]}")
         self.info_label.setStyleSheet("color: #000000; background-color: transparent; font-size: 11pt;")
+
         self.status_label = QLabel(self.status if self.status else "")
-        font = self.status_label.font();
-        font.setBold(True);
+        font = self.status_label.font()
+        font.setBold(True)
         self.status_label.setFont(font)
+
         if self.status == "В ожидании":
             self.status_label.setStyleSheet("color: #e67e22;")
         elif self.status == "Принята":
             self.status_label.setStyleSheet("color: #27ae60;")
         elif self.status == "Отклонена":
             self.status_label.setStyleSheet("color: #c0392b;")
-        self.request_btn = QPushButton("Запросить замену");
+
+        self.request_btn = QPushButton("Запросить замену")
         self.request_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.request_btn.setStyleSheet(
             "QPushButton { background-color: #34495e; color: white; padding: 5px; border-radius: 3px; } QPushButton:disabled { background-color: #95a5a6; color: #bdc3c7; }")
         self.request_btn.clicked.connect(self.create_request)
-        if self.status in ["В ожидании", "Принята"]: self.request_btn.setEnabled(False)
-        layout.addWidget(self.info_label);
-        layout.addStretch();
-        layout.addWidget(self.status_label);
+
+        self.delete_btn = QPushButton("Удалить")
+        self.delete_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.delete_btn.setStyleSheet("background-color: #e74c3c; color: white; padding: 5px; border-radius: 3px;")
+        self.delete_btn.clicked.connect(self.delete_equipment)
+
+        if self.status in ["В ожидании", "Принята"]:
+            self.request_btn.setEnabled(False)
+
+        layout.addWidget(self.info_label)
+        layout.addStretch()
+        layout.addWidget(self.status_label)
         layout.addWidget(self.request_btn)
+        layout.addWidget(self.delete_btn)
 
     def create_request(self):
         self.employee_window.handle_add_request(self.equipment_id)
+
+    def delete_equipment(self):
+        if self.employee_window.db.delete_equipment(self.equipment_id):
+            self.employee_window.load_content()
+        else:
+            QMessageBox.critical(self, "Ошибка", "Не удалось удалить оборудование.")
 
 
 class RequestItemWidget(QWidget):
@@ -276,11 +310,11 @@ class RequestItemWidget(QWidget):
 
     def accept_request(self):
         self.tech_window.db.update_request_status(self.request_id, "Принята")
-        self.tech_window.load_content()  # ИСПРАВЛЕНО
+        self.tech_window.load_content()
 
     def reject_request(self):
         self.tech_window.db.update_request_status(self.request_id, "Отклонена")
-        self.tech_window.load_content()  # ИСПРАВЛЕНО
+        self.tech_window.load_content()
 
     def complete_request(self):
         new_id_str = self.new_id_input.text().strip()
@@ -288,9 +322,10 @@ class RequestItemWidget(QWidget):
         try:
             new_id = int(new_id_str)
         except ValueError:
-            QMessageBox.warning(self, "Ошибка", "ID оборудования должен быть числом."); return
+            QMessageBox.warning(self, "Ошибка", "ID оборудования должен быть числом.");
+            return
         self.tech_window.db.resolve_request(self.request_id, new_id)
-        self.tech_window.load_content()  # ИСПРАВЛЕНО
+        self.tech_window.load_content()
 
 
 class BaseWidget(QWidget):
@@ -309,7 +344,7 @@ class BaseWidget(QWidget):
         self.title_label.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold));
         self.title_label.setStyleSheet("color: #ecf0f1;");
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.content_widget = QWidget()  # Виджет для уникального контента каждой панели
+        self.content_widget = QWidget()
         logout_btn = QPushButton("Выйти");
         logout_btn.setFixedHeight(45);
         logout_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor));
@@ -318,7 +353,7 @@ class BaseWidget(QWidget):
         logout_btn.clicked.connect(self.logout_requested.emit)
 
         self.main_layout.addWidget(self.title_label)
-        self.main_layout.addWidget(self.content_widget, 1)  # Даем content_widget растягиваться
+        self.main_layout.addWidget(self.content_widget, 1)
         self.main_layout.addWidget(logout_btn)
 
     def set_user_data(self, user_data):
@@ -396,15 +431,18 @@ class EmployeeWidget(BaseWidget):
         try:
             inventory_id = int(inventory_id_str)
         except ValueError:
-            self.message_label.setStyleSheet("color: #e74c3c;"); self.message_label.setText(
-                "ID оборудования должен быть числом."); return
+            self.message_label.setStyleSheet("color: #e74c3c;");
+            self.message_label.setText(
+                "ID оборудования должен быть числом.");
+            return
         if self.db.add_equipment(self.user_data['id'], self.type_combo.currentText(), inventory_id):
             self.message_label.setStyleSheet("color: #2ecc71;");
             self.message_label.setText("Оборудование успешно добавлено!");
             self.id_input.clear();
             self.load_content()
         else:
-            self.message_label.setStyleSheet("color: #e74c3c;"); self.message_label.setText(
+            self.message_label.setStyleSheet("color: #e74c3c;");
+            self.message_label.setText(
                 "Ошибка: Оборудование с таким ID уже существует.")
 
     def handle_add_request(self, equipment_id):
@@ -559,7 +597,8 @@ class TechAdminManagementWidget(BaseWidget):
             self.email_edit.clear();
             self.load_content()
         else:
-            self.message_label.setStyleSheet("color: #e74c3c;"); self.message_label.setText(
+            self.message_label.setStyleSheet("color: #e74c3c;");
+            self.message_label.setText(
                 f"Имя пользователя или email уже заняты.")
 
 
@@ -674,13 +713,17 @@ class AuthWidget(QWidget):
         self.register_error_label.clear()
 
     def show_login_with_message(self, message):
-        self.clear_input_fields(); self.login_info_label.setText(message); self.stacked_widget.setCurrentIndex(0)
+        self.clear_input_fields();
+        self.login_info_label.setText(message);
+        self.stacked_widget.setCurrentIndex(0)
 
     def show_login(self, event=None):
-        self.clear_input_fields(); self.stacked_widget.setCurrentIndex(0)
+        self.clear_input_fields();
+        self.stacked_widget.setCurrentIndex(0)
 
     def show_register(self, event=None):
-        self.clear_input_fields(); self.stacked_widget.setCurrentIndex(1)
+        self.clear_input_fields();
+        self.stacked_widget.setCurrentIndex(1)
 
     def handle_login(self):
         self.login_error_label.setText("");
@@ -733,7 +776,7 @@ class MainWindow(QMainWindow):
         self.employee_widget.logout_requested.connect(self.handle_logout)
         self.tech_support_widget.logout_requested.connect(self.handle_logout)
         self.tech_admin_widget.logout_requested.connect(self.handle_logout)
-        self.handle_logout()  # Показываем экран входа при запуске
+        self.handle_logout()
 
     def handle_successful_login(self, user_data):
         self.auth_widget.clear_input_fields()
