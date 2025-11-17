@@ -748,7 +748,7 @@ class AuthWidget(QWidget):
         if not all([full_name, email, username, password, confirm_password]): self.register_error_label.setText(
             "Пожалуйста, заполните все поля."); return
         if password != confirm_password: self.register_error_label.setText("Пароли не совпадают."); return
-        if len(password) < 4: self.register_error_label.setText("Пароль должен быть не менее 4 символов."); return
+        if len(password) < 1: self.register_error_label.setText("Пароль должен быть не менее 4 символов."); return
         if '@' not in email or '.' not in email: self.register_error_label.setText("Введите корректный email."); return
         if self.db.create_user(username, password, full_name, email):
             self.registration_successful.emit("Регистрация успешна! Теперь вы можете войти.")
